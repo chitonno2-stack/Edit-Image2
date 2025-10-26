@@ -1,24 +1,29 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { AiProvider } from '../types';
 
 interface MaskingCanvasProps {
   imageSrc: string;
   brushSize: number;
   onMaskChange: (mask: string | null) => void;
+  provider: AiProvider;
+  model: string;
 }
 
-const MaskingCanvas: React.FC<MaskingCanvasProps> = ({ imageSrc, brushSize, onMaskChange }) => {
+const MaskingCanvas: React.FC<MaskingCanvasProps> = ({ imageSrc, brushSize, onMaskChange, provider, model }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null); // Offscreen canvas for the mask
   const [isDrawing, setIsDrawing] = useState(false);
   const [lastPosition, setLastPosition] = useState<{ x: number; y: number } | null>(null);
   const imageRef = useRef<HTMLImageElement>(new Image());
 
-  // Function to resize canvas to fit the displayed image
-  const resizeCanvas = () => {
+  const isDalle2 = provider === AiProvider.OPENAI && model === 'dall-e-2';
+
+  // Function to resize and setup canvas
+  const setupCanvas = () => {
     const canvas = canvasRef.current;
     const container = canvas?.parentElement;
     const image = imageRef.current;
-    if (!canvas || !container || !image.src) return;
+    if (!canvas || !container || !image.src || image.naturalWidth === 0) return;
 
     const { naturalWidth, naturalHeight } = image;
     const { width: containerWidth, height: containerHeight } = container.getBoundingClientRect();
@@ -36,43 +41,51 @@ const MaskingCanvas: React.FC<MaskingCanvasProps> = ({ imageSrc, brushSize, onMa
       renderWidth = containerHeight * imageAspectRatio;
     }
     
+    // Setup visible canvas
     canvas.width = renderWidth;
     canvas.height = renderHeight;
     canvas.style.width = `${renderWidth}px`;
     canvas.style.height = `${renderHeight}px`;
+    const ctx = canvas.getContext('2d');
+    ctx?.clearRect(0, 0, renderWidth, renderHeight);
 
-    // Also resize the offscreen mask canvas
+    // Setup offscreen mask canvas
     if (maskCanvasRef.current) {
         maskCanvasRef.current.width = renderWidth;
         maskCanvasRef.current.height = renderHeight;
         const maskCtx = maskCanvasRef.current.getContext('2d');
         if (maskCtx) {
+            // For DALL-E 2, we start with an opaque canvas and "erase" to transparency.
+            // For Gemini, we start with a black canvas and draw white "protected" areas.
             maskCtx.fillStyle = 'black';
             maskCtx.fillRect(0, 0, renderWidth, renderHeight);
         }
     }
   };
   
-  // Load image and setup resize observer
+  // Load image and setup canvas
   useEffect(() => {
     const image = imageRef.current;
     image.crossOrigin = 'anonymous';
     image.src = imageSrc;
 
     const handleLoad = () => {
-        resizeCanvas();
+        setupCanvas();
     };
 
     image.addEventListener('load', handleLoad);
-
-    const container = canvasRef.current?.parentElement;
-    const resizeObserver = new ResizeObserver(() => resizeCanvas());
-    if (container) {
-      resizeObserver.observe(container);
-    }
     
     // Initialize the offscreen mask canvas
     maskCanvasRef.current = document.createElement('canvas');
+
+    const container = canvasRef.current?.parentElement;
+    const resizeObserver = new ResizeObserver(() => setupCanvas());
+    if (container) {
+      resizeObserver.observe(container);
+    }
+
+    // Clear mask state when provider changes
+    onMaskChange(null);
 
 
     return () => {
@@ -81,7 +94,7 @@ const MaskingCanvas: React.FC<MaskingCanvasProps> = ({ imageSrc, brushSize, onMa
         resizeObserver.unobserve(container);
       }
     };
-  }, [imageSrc]);
+  }, [imageSrc, isDalle2]);
 
   const getCoordinates = (event: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current;
@@ -105,29 +118,44 @@ const MaskingCanvas: React.FC<MaskingCanvasProps> = ({ imageSrc, brushSize, onMa
     const ctx = canvas.getContext('2d');
     const maskCtx = maskCanvas.getContext('2d');
     if (!ctx || !maskCtx) return;
+    
+    const strokeStyle = isDalle2 ? 'rgba(0, 0, 0, 0.7)' : 'rgba(239, 68, 68, 0.6)';
 
     // Draw on visible canvas (for user feedback)
     ctx.beginPath();
     ctx.moveTo(from.x, from.y);
     ctx.lineTo(to.x, to.y);
-    ctx.strokeStyle = 'rgba(239, 68, 68, 0.6)'; // Semi-transparent red
+    ctx.strokeStyle = strokeStyle;
     ctx.lineWidth = brushSize;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.stroke();
     
     // Draw on offscreen mask canvas (for API)
+    if (isDalle2) {
+      // "Erase" to transparency
+      maskCtx.globalCompositeOperation = 'destination-out';
+    } else {
+      maskCtx.globalCompositeOperation = 'source-over';
+    }
+    
     maskCtx.beginPath();
     maskCtx.moveTo(from.x, from.y);
     maskCtx.lineTo(to.x, to.y);
-    maskCtx.strokeStyle = 'white';
+    maskCtx.strokeStyle = 'white'; // Color doesn't matter for destination-out, but does for source-over
     maskCtx.lineWidth = brushSize;
     maskCtx.lineCap = 'round';
     maskCtx.lineJoin = 'round';
     maskCtx.stroke();
+
+    // Reset composite operation if we changed it
+    if (isDalle2) {
+      maskCtx.globalCompositeOperation = 'source-over';
+    }
   };
 
   const startDrawing = (event: React.MouseEvent | React.TouchEvent) => {
+    event.preventDefault();
     const coords = getCoordinates(event);
     if (coords) {
       setIsDrawing(true);
@@ -148,6 +176,7 @@ const MaskingCanvas: React.FC<MaskingCanvasProps> = ({ imageSrc, brushSize, onMa
   };
 
   const handleDrawMove = (event: React.MouseEvent | React.TouchEvent) => {
+    event.preventDefault();
     if (!isDrawing || !lastPosition) return;
     const coords = getCoordinates(event);
     if (coords) {

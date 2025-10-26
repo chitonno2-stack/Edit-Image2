@@ -340,7 +340,7 @@ const generateImageWithGemini = async ({ apiKey, base64Image, base64BackgroundIm
         
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
-            contents: [{ role: 'user', parts: parts }],
+            contents: { parts: parts },
             config: {
                 responseModalities: [Modality.IMAGE],
             },
@@ -404,6 +404,8 @@ function base64ToBlob(base64: string, mimeType: string): Blob {
 
 const generateImageWithOpenAI = async ({ apiKey, model, base64Image, base64Mask, mimeType, prompt, mode, settings }: GenerateImageParams): Promise<string> => {
     // DALL-E 2 inpainting/outpainting workflow
+    // DEV NOTE: DALL-E 2 requires the input image to be a square PNG.
+    // This function does not currently enforce that, which may lead to API errors.
     if (model === 'dall-e-2' && mode === WorkMode.CREATIVE && base64Image && base64Mask) {
         const formData = new FormData();
         const imageBlob = base64ToBlob(base64Image.split(',')[1], mimeType);

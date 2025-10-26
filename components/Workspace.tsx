@@ -332,6 +332,8 @@ const Workspace: React.FC<WorkspaceProps> = ({
                         imageSrc={originalImage}
                         brushSize={brushSize}
                         onMaskChange={onMaskChange}
+                        provider={activeModeSettings.provider}
+                        model={activeModeSettings.model}
                       />
                   )}
                   {/* Render Text Overlays on the original image pane */}
