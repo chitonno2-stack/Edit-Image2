@@ -1,6 +1,16 @@
 import React from 'react';
-import { WorkMode, ModeInfo } from './types';
+import { WorkMode, ModeInfo, AiProvider } from './types';
 import Icon from './components/Icon';
+
+export const AI_MODELS: Record<AiProvider, { value: string; label: string }[]> = {
+  [AiProvider.GEMINI]: [
+    { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image' }
+  ],
+  [AiProvider.OPENAI]: [
+    { value: 'dall-e-3', label: 'DALL-E 3 (Chất lượng cao)' },
+    { value: 'dall-e-2', label: 'DALL-E 2 (Hỗ trợ sửa vùng)' },
+  ],
+};
 
 export const WORK_MODES: ModeInfo[] = [
   {

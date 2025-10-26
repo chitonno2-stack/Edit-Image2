@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { WorkMode, TextOverlay } from '../types';
+import { WorkMode, TextOverlay, AiProvider } from '../types';
 import { PROMPT_SUGGESTIONS } from '../constants';
 import ImageComparator from './ImageComparator';
 import MaskingCanvas from './MaskingCanvas';
@@ -7,6 +7,7 @@ import TextToolbar from './TextToolbar';
 
 interface WorkspaceProps {
   activeMode: WorkMode;
+  activeModeSettings: { provider: AiProvider; model: string; };
   originalImage: string | null;
   resultImage: string | null;
   backgroundImage: string | null;
@@ -155,7 +156,7 @@ const DraggableText: React.FC<{
 
 
 const Workspace: React.FC<WorkspaceProps> = ({ 
-  activeMode, originalImage, resultImage, backgroundImage, onImageUpload, onClearImage, isLoading, onGenerate, onCommitResult, onUndo, onRedo, canUndo, canRedo,
+  activeMode, activeModeSettings, originalImage, resultImage, backgroundImage, onImageUpload, onClearImage, isLoading, onGenerate, onCommitResult, onUndo, onRedo, canUndo, canRedo,
   isMasking, identityMask, onMaskChange, brushSize,
   textOverlays, activeTextOverlayId, onAddText, onUpdateTextOverlay, onDeleteTextOverlay, onSelectTextOverlay
 }) => {
@@ -263,6 +264,8 @@ const Workspace: React.FC<WorkspaceProps> = ({
 
   const activeOverlay = textOverlays.find(o => o.id === activeTextOverlayId);
   const isCompositePreview = activeMode === WorkMode.COMPOSITE && originalImage && backgroundImage && !resultImage;
+  
+  const showOpenAiWarning = originalImage && activeModeSettings.provider === AiProvider.OPENAI && !(activeMode === WorkMode.CREATIVE && isMasking && activeModeSettings.model === 'dall-e-2');
 
   return (
     <div className="flex-1 flex flex-col bg-gray-900 rounded-lg overflow-hidden h-full">
@@ -308,6 +311,11 @@ const Workspace: React.FC<WorkspaceProps> = ({
           <div className="flex w-full h-full gap-4">
             <div className="flex-[2] flex flex-col items-center justify-center bg-gray-900/50 rounded-lg p-2 relative">
               <h3 className="absolute top-2 left-3 text-sm font-bold text-gray-400 bg-gray-800/80 px-3 py-1 rounded-full z-20">Ảnh Gốc</h3>
+              {showOpenAiWarning && (
+                <div className="absolute top-12 left-1/2 -translate-x-1/2 w-11/12 bg-yellow-600/90 text-white text-xs font-semibold p-2 rounded-md z-20 text-center shadow-lg">
+                  Chế độ OpenAI sẽ tạo ảnh mới từ văn bản và bỏ qua ảnh gốc này.
+                </div>
+              )}
               <button
                 onClick={onClearImage}
                 className="absolute top-2 right-2 p-1 bg-gray-800/80 text-white rounded-full hover:bg-red-500 transition-colors z-20"
@@ -505,7 +513,7 @@ const Workspace: React.FC<WorkspaceProps> = ({
             />
             <button
                 onClick={handleGenerateClick}
-                disabled={isLoading || !originalImage}
+                disabled={isLoading || (!originalImage && activeModeSettings.provider === AiProvider.GEMINI)}
                 className="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-500 disabled:cursor-not-allowed transition-colors"
             >
                 Tạo

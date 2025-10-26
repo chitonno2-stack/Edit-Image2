@@ -1,19 +1,21 @@
 import React, { useState } from 'react';
+import { AiProvider } from '../types';
 
 interface ApiKeyManagerProps {
   isOpen: boolean;
   onClose: () => void;
-  apiKeys: string[];
-  activeApiKey: string | null;
-  onAddKeys: (keys: string[]) => Promise<{ added: string[]; failed: string[] }>;
-  onDeleteKey: (key: string) => void;
-  onSetActiveKey: (key: string) => void;
+  apiKeys: { [key in AiProvider]: string[] };
+  activeApiKey: { provider: AiProvider; key: string } | null;
+  onAddKeys: (keys: string[], provider: AiProvider) => Promise<{ added: string[]; failed: string[] }>;
+  onDeleteKey: (key: string, provider: AiProvider) => void;
+  onSetActiveKey: (key: string, provider: AiProvider) => void;
 }
 
 const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ isOpen, onClose, apiKeys, activeApiKey, onAddKeys, onDeleteKey, onSetActiveKey }) => {
   const [newKeysInput, setNewKeysInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<AiProvider>(AiProvider.GEMINI);
 
   if (!isOpen) return null;
 
@@ -27,7 +29,7 @@ const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ isOpen, onClose, apiKeys,
     setIsProcessing(true);
     setFeedbackMessage(null);
 
-    const { added, failed } = await onAddKeys(keysToAdd);
+    const { added, failed } = await onAddKeys(keysToAdd, activeTab);
     
     let message = '';
     if (added.length > 0) {
@@ -44,6 +46,12 @@ const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ isOpen, onClose, apiKeys,
 
   const maskKey = (key: string) => `${key.substring(0, 4)}...${key.substring(key.length - 4)}`;
 
+  const handleTabChange = (tab: AiProvider) => {
+    setActiveTab(tab);
+    setFeedbackMessage(null);
+    setNewKeysInput('');
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-center z-50" onClick={onClose}>
       <div className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl w-full max-w-2xl text-white p-6" onClick={(e) => e.stopPropagation()}>
@@ -56,9 +64,24 @@ const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ isOpen, onClose, apiKeys,
           </button>
         </div>
 
+        <div className="flex border-b border-gray-700 mb-4">
+          <button 
+            onClick={() => handleTabChange(AiProvider.GEMINI)}
+            className={`px-4 py-2 text-sm font-semibold transition-colors ${activeTab === AiProvider.GEMINI ? 'border-b-2 border-blue-500 text-white' : 'text-gray-400 hover:text-white'}`}
+          >
+            Google Gemini
+          </button>
+          <button 
+            onClick={() => handleTabChange(AiProvider.OPENAI)}
+            className={`px-4 py-2 text-sm font-semibold transition-colors ${activeTab === AiProvider.OPENAI ? 'border-b-2 border-blue-500 text-white' : 'text-gray-400 hover:text-white'}`}
+          >
+            OpenAI (ChatGPT)
+          </button>
+        </div>
+
         {/* Add Keys Section */}
         <div className="mb-6">
-          <label htmlFor="key-input" className="block text-sm font-medium text-gray-300 mb-2">Thêm API key mới</label>
+          <label htmlFor="key-input" className="block text-sm font-medium text-gray-300 mb-2">Thêm API key cho {activeTab}</label>
           <p className="text-xs text-gray-400 mb-2">Bạn có thể dán nhiều key, mỗi key trên một dòng hoặc cách nhau bằng dấu phẩy/khoảng trắng.</p>
           <textarea
             id="key-input"
@@ -66,7 +89,7 @@ const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ isOpen, onClose, apiKeys,
             value={newKeysInput}
             onChange={(e) => setNewKeysInput(e.target.value)}
             disabled={isProcessing}
-            placeholder="Dán API key của bạn vào đây..."
+            placeholder={`Dán API key ${activeTab} của bạn vào đây...`}
             className="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:opacity-50"
           />
           <button
@@ -79,23 +102,23 @@ const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ isOpen, onClose, apiKeys,
                 <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                 <span>Đang xác thực...</span>
               </>
-            ) : "Thêm và Xác thực Keys"}
+            ) : `Thêm và Xác thực Keys ${activeTab}`}
           </button>
           {feedbackMessage && <p className="text-sm text-yellow-300 mt-2 text-center">{feedbackMessage}</p>}
         </div>
 
         {/* Key List Section */}
         <div>
-          <h3 className="text-md font-semibold text-gray-300 mb-3">API Keys đã lưu</h3>
+          <h3 className="text-md font-semibold text-gray-300 mb-3">API Keys {activeTab} đã lưu</h3>
           <div className="max-h-60 overflow-y-auto bg-gray-900/50 p-2 rounded-lg flex flex-col gap-2">
-            {apiKeys.length > 0 ? apiKeys.map(key => (
-              <div key={key} className={`flex items-center justify-between p-3 rounded-md ${activeApiKey === key ? 'bg-green-600/20 border border-green-500' : 'bg-gray-700/50'}`}>
+            {apiKeys[activeTab].length > 0 ? apiKeys[activeTab].map(key => (
+              <div key={key} className={`flex items-center justify-between p-3 rounded-md ${activeApiKey?.provider === activeTab && activeApiKey?.key === key ? 'bg-green-600/20 border border-green-500' : 'bg-gray-700/50'}`}>
                 <div className="flex items-center gap-3 overflow-hidden">
-                   {activeApiKey === key ? (
+                   {activeApiKey?.provider === activeTab && activeApiKey?.key === key ? (
                      <span className="text-xs flex-shrink-0 font-bold text-green-400 bg-green-900 px-2 py-1 rounded-full">ĐANG DÙNG</span>
                    ) : (
                      <button 
-                       onClick={() => onSetActiveKey(key)}
+                       onClick={() => onSetActiveKey(key, activeTab)}
                        className="text-xs flex-shrink-0 font-semibold text-blue-300 bg-blue-900 px-2 py-1 rounded-full hover:bg-blue-800 transition-colors"
                      >
                        SỬ DỤNG
@@ -104,7 +127,7 @@ const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ isOpen, onClose, apiKeys,
                   <span className="font-mono text-sm text-gray-400 truncate">{maskKey(key)}</span>
                 </div>
                 <button
-                  onClick={() => onDeleteKey(key)}
+                  onClick={() => onDeleteKey(key, activeTab)}
                   className="p-1.5 flex-shrink-0 rounded-full text-gray-400 hover:bg-red-600/50 hover:text-white transition-colors"
                   aria-label="Xóa key"
                 >
@@ -114,7 +137,7 @@ const ApiKeyManager: React.FC<ApiKeyManagerProps> = ({ isOpen, onClose, apiKeys,
                 </button>
               </div>
             )) : (
-              <p className="text-center text-gray-500 py-4">Chưa có API key nào được lưu.</p>
+              <p className="text-center text-gray-500 py-4">Chưa có API key {activeTab} nào được lưu.</p>
             )}
           </div>
         </div>

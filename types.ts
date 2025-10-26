@@ -1,6 +1,11 @@
 
 import type React from 'react';
 
+export enum AiProvider {
+  GEMINI = 'Gemini',
+  OPENAI = 'OpenAI',
+}
+
 export enum WorkMode {
   PORTRAIT,
   RESTORE,

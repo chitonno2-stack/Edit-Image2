@@ -3,28 +3,28 @@ import ControlCenter from './components/ControlCenter';
 import Workspace from './components/Workspace';
 import ContextualPanel from './components/ContextualPanel';
 import ApiKeyManager from './components/ApiKeyManager';
-import { WorkMode, TextOverlay } from './types';
-import { generateImageWithGemini, validateApiKey, ApiKeyError } from './services/geminiService';
+import { WorkMode, TextOverlay, AiProvider } from './types';
+import { generateImage, validateApiKey, ApiKeyError } from './services/aiService';
 import { flattenTextOverlays } from './services/imageUtils';
+import { AI_MODELS } from './constants';
 
 const initialSettings = {
   [WorkMode.PORTRAIT]: {
+    provider: AiProvider.GEMINI,
+    model: AI_MODELS[AiProvider.GEMINI][0].value,
     // 2. Identity & Detail Engine
     targetResolution: '8K',
     autoSkinTexture: true,
     autoHairDetail: true,
-
     // 3. Dynamic Studio Relighting
     autoBalanceLighting: true,
     lightStyle: '3-point', // '3-point', 'rim', 'butterfly'
     lightIntensity: 70,
-
     // 4. Professional Lens FX
     autoBokeh: true,
     lensProfile: '85mm f/1.4', // '85mm f/1.4', '50mm f/1.8', '35mm f/2'
     backgroundBlur: 80,
     chromaticAberration: false,
-
     // 5. Beauty & Style
     skinSmoothing: 40,
     removeBlemishes: true,
@@ -34,6 +34,8 @@ const initialSettings = {
     hair: '',
   },
   [WorkMode.RESTORE]: {
+    provider: AiProvider.GEMINI,
+    model: AI_MODELS[AiProvider.GEMINI][0].value,
     // Step 1: Clean
     autoClean: true,
     // Step 2: Remaster
@@ -51,14 +53,17 @@ const initialSettings = {
     context: '',
   },
   [WorkMode.CREATIVE]: {
+    provider: AiProvider.GEMINI,
+    model: AI_MODELS[AiProvider.GEMINI][0].value,
     // Workflow 1: Studio Swap
     subjectIsolated: false,
     backgroundPrompt: '',
-
     // Workflow 2: Full-Body Generation
     fullBodyPrompt: '',
   },
   [WorkMode.COMPOSITE]: {
+    provider: AiProvider.GEMINI,
+    model: AI_MODELS[AiProvider.GEMINI][0].value,
     lightMatch: 85,
     colorTempMatch: 90,
     smartShadows: true,
@@ -82,8 +87,8 @@ const App: React.FC = () => {
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
   
   // New state for API Key Management
-  const [apiKeys, setApiKeys] = useState<string[]>([]);
-  const [activeApiKey, setActiveApiKey] = useState<string | null>(null);
+  const [apiKeys, setApiKeys] = useState<{ [key in AiProvider]: string[] }>({ [AiProvider.GEMINI]: [], [AiProvider.OPENAI]: [] });
+  const [activeApiKey, setActiveApiKey] = useState<{ provider: AiProvider, key: string } | null>(null);
   const [isApiKeyManagerOpen, setIsApiKeyManagerOpen] = useState(false);
 
   // State for Identity Lock/Masking feature
@@ -95,44 +100,67 @@ const App: React.FC = () => {
   const [textOverlays, setTextOverlays] = useState<TextOverlay[]>([]);
   const [activeTextOverlayId, setActiveTextOverlayId] = useState<string | null>(null);
 
+  const findAndSetNewActiveKey = (keys: { [key in AiProvider]: string[] }) => {
+    let newActiveKey: { provider: AiProvider, key: string } | null = null;
+    if (keys[AiProvider.GEMINI].length > 0) {
+        newActiveKey = { provider: AiProvider.GEMINI, key: keys[AiProvider.GEMINI][0] };
+    } else if (keys[AiProvider.OPENAI].length > 0) {
+        newActiveKey = { provider: AiProvider.OPENAI, key: keys[AiProvider.OPENAI][0] };
+    }
+    setActiveApiKey(newActiveKey);
+    if(newActiveKey) {
+        localStorage.setItem('activeApiKey', JSON.stringify(newActiveKey));
+    } else {
+        localStorage.removeItem('activeApiKey');
+    }
+  };
+
   // Load keys from localStorage on initial render
   useEffect(() => {
     try {
       const storedKeys = localStorage.getItem('userApiKeys');
       const storedActiveKey = localStorage.getItem('activeApiKey');
       
+      let parsedKeys = { [AiProvider.GEMINI]: [], [AiProvider.OPENAI]: [] };
       if (storedKeys) {
-        const parsedKeys = JSON.parse(storedKeys) as string[];
+        // Ensure both provider keys exist even if storage is old
+        const fromStorage = JSON.parse(storedKeys);
+        parsedKeys = { ...parsedKeys, ...fromStorage };
         setApiKeys(parsedKeys);
-        
-        if (storedActiveKey && parsedKeys.includes(storedActiveKey)) {
-          setActiveApiKey(storedActiveKey);
-        } else if (parsedKeys.length > 0) {
-          // If active key is invalid but others exist, set the first one
-          const newActiveKey = parsedKeys[0];
-          setActiveApiKey(newActiveKey);
-          localStorage.setItem('activeApiKey', newActiveKey);
-        }
+      }
+      
+      if (storedActiveKey) {
+          const parsedActiveKey = JSON.parse(storedActiveKey) as { provider: AiProvider, key: string };
+          // Validate that the active key actually exists in our list
+          if (parsedKeys[parsedActiveKey.provider]?.includes(parsedActiveKey.key)) {
+              setActiveApiKey(parsedActiveKey);
+          } else {
+              // Active key is invalid, try to find a fallback
+              findAndSetNewActiveKey(parsedKeys);
+          }
+      } else if (parsedKeys[AiProvider.GEMINI].length > 0 || parsedKeys[AiProvider.OPENAI].length > 0) {
+        // No active key stored, find one
+        findAndSetNewActiveKey(parsedKeys);
       } else {
-        // If no keys are stored, open the manager automatically for the first-time user.
+        // No keys at all, open manager
         setIsApiKeyManagerOpen(true);
       }
     } catch (error) {
       console.error("Failed to load API keys from localStorage", error);
-      // Clear potentially corrupted storage
       localStorage.removeItem('userApiKeys');
       localStorage.removeItem('activeApiKey');
     }
   }, []);
 
   // API Key Manager Handlers
-  const handleAddApiKeys = async (keysToAdd: string[]) => {
-    const uniqueNewKeys = [...new Set(keysToAdd.filter(k => !apiKeys.includes(k)))];
+  const handleAddApiKeys = async (keysToAdd: string[], provider: AiProvider) => {
+    const existingKeys = apiKeys[provider];
+    const uniqueNewKeys = [...new Set(keysToAdd.filter(k => !existingKeys.includes(k)))];
     if (uniqueNewKeys.length === 0) {
       return { added: [], failed: keysToAdd };
     }
     
-    const validationPromises = uniqueNewKeys.map(key => validateApiKey(key).then(isValid => ({ key, isValid })));
+    const validationPromises = uniqueNewKeys.map(key => validateApiKey(key, provider).then(isValid => ({ key, isValid })));
     
     const results = await Promise.all(validationPromises);
 
@@ -148,39 +176,36 @@ const App: React.FC = () => {
     });
 
     if (added.length > 0) {
-      const updatedKeys = [...apiKeys, ...added];
+      const updatedKeysForProvider = [...existingKeys, ...added];
+      const updatedKeys = { ...apiKeys, [provider]: updatedKeysForProvider };
       setApiKeys(updatedKeys);
       localStorage.setItem('userApiKeys', JSON.stringify(updatedKeys));
       
       if (!activeApiKey) {
-        const newActiveKey = added[0];
+        const newActiveKey = { provider, key: added[0] };
         setActiveApiKey(newActiveKey);
-        localStorage.setItem('activeApiKey', newActiveKey);
+        localStorage.setItem('activeApiKey', JSON.stringify(newActiveKey));
       }
     }
     
     return { added, failed };
   };
 
-  const handleDeleteApiKey = (keyToDelete: string) => {
-    const updatedKeys = apiKeys.filter(k => k !== keyToDelete);
+  const handleDeleteApiKey = (keyToDelete: string, provider: AiProvider) => {
+    const updatedKeysForProvider = apiKeys[provider].filter(k => k !== keyToDelete);
+    const updatedKeys = { ...apiKeys, [provider]: updatedKeysForProvider };
     setApiKeys(updatedKeys);
     localStorage.setItem('userApiKeys', JSON.stringify(updatedKeys));
     
-    if (activeApiKey === keyToDelete) {
-      const newActiveKey = updatedKeys.length > 0 ? updatedKeys[0] : null;
-      setActiveApiKey(newActiveKey);
-      if (newActiveKey) {
-        localStorage.setItem('activeApiKey', newActiveKey);
-      } else {
-        localStorage.removeItem('activeApiKey');
-      }
+    if (activeApiKey?.key === keyToDelete && activeApiKey?.provider === provider) {
+        findAndSetNewActiveKey(updatedKeys);
     }
   };
 
-  const handleSetActiveApiKey = (key: string) => {
-    setActiveApiKey(key);
-    localStorage.setItem('activeApiKey', key);
+  const handleSetActiveApiKey = (key: string, provider: AiProvider) => {
+    const newActiveKey = { provider, key };
+    setActiveApiKey(newActiveKey);
+    localStorage.setItem('activeApiKey', JSON.stringify(newActiveKey));
     setIsApiKeyManagerOpen(false); // Close manager after selecting a key for better UX
   };
 
@@ -242,7 +267,8 @@ const App: React.FC = () => {
   };
   
   const handleGenerate = async (prompt: string) => {
-    if (!image) return;
+    // For OpenAI text-to-image, an initial image is not required
+    if (!image && activeSettings.provider === AiProvider.GEMINI) return;
     if (!activeApiKey) {
       alert("Vui lòng thiết lập một API Key đang hoạt động trước khi tạo ảnh.");
       setIsApiKeyManagerOpen(true);
@@ -253,13 +279,16 @@ const App: React.FC = () => {
     setResultImage(null);
     
     try {
-      const imageWithText = textOverlays.length > 0
+      const imageWithText = (image && textOverlays.length > 0)
         ? await flattenTextOverlays(image, textOverlays)
         : image;
         
-      const mimeType = imageWithText.substring(imageWithText.indexOf(':') + 1, imageWithText.indexOf(';'));
-      const generatedImage = await generateImageWithGemini({
-        apiKey: activeApiKey,
+      const mimeType = imageWithText?.substring(imageWithText.indexOf(':') + 1, imageWithText.indexOf(';')) || 'image/jpeg';
+      
+      const generatedImage = await generateImage({
+        apiKey: activeApiKey.key,
+        provider: activeSettings.provider,
+        model: activeSettings.model,
         base64Image: imageWithText,
         base64BackgroundImage: activeMode === WorkMode.COMPOSITE ? backgroundImage : undefined,
         base64ReferenceImage: activeMode === WorkMode.CREATIVE ? referenceImage : undefined,
@@ -275,7 +304,7 @@ const App: React.FC = () => {
       if (error instanceof ApiKeyError) {
           alert(error.message);
           // The key might be invalid, let's remove it and prompt the user.
-          if(activeApiKey) handleDeleteApiKey(activeApiKey); 
+          if(activeApiKey) handleDeleteApiKey(activeApiKey.key, activeApiKey.provider); 
           setIsApiKeyManagerOpen(true);
       } else {
           console.error("An unexpected error occurred during image generation:", error);
@@ -297,7 +326,11 @@ const App: React.FC = () => {
     }
     // Reset creative mode workflow states when switching to it
     if (mode === WorkMode.CREATIVE) {
-        handleSettingsChange(initialSettings[WorkMode.CREATIVE]);
+        // Keep provider and model but reset other settings
+        const currentProvider = settings[WorkMode.CREATIVE].provider;
+        const currentModel = settings[WorkMode.CREATIVE].model;
+        const newCreativeSettings = { ...initialSettings[WorkMode.CREATIVE], provider: currentProvider, model: currentModel };
+        handleSettingsChange(newCreativeSettings);
     }
     setActiveMode(mode);
   }
@@ -401,6 +434,7 @@ const App: React.FC = () => {
       <main className="flex-1 flex flex-col p-4 gap-4">
         <Workspace 
           activeMode={activeMode}
+          activeModeSettings={activeSettings}
           originalImage={image}
           resultImage={resultImage}
           backgroundImage={backgroundImage}
@@ -423,7 +457,7 @@ const App: React.FC = () => {
           activeTextOverlayId={activeTextOverlayId}
           onAddText={handleAddText}
           onUpdateTextOverlay={handleUpdateTextOverlay}
-          onDeleteTextOverlay={handleDeleteTextOverlay}
+  onDeleteTextOverlay={handleDeleteTextOverlay}
           onSelectTextOverlay={setActiveTextOverlayId}
         />
       </main>
