@@ -207,7 +207,7 @@ Apply the following style and technical parameters:\n`;
 
     if (mode === WorkMode.CREATIVE) {
         if (base64Mask) {
-            fullPrompt = `CRITICAL TASK: INPAINTING/OUTPAINTING WITH A PROTECTED MASK. A second image is provided which acts as a mask. The WHITE areas on this mask are PROTECTED and MUST NOT BE ALTERED in any way. The BLACK areas are where new content should be generated.
+            fullPrompt = `CRITICAL TASK: INPAINTING/OUTPAINTING WITH A PROTECTED MASK. A second image is provided which acts as a mask. The WHITE areas on this mask are PROTECTED and MUST NOT BE ALTERTERED in any way. The BLACK areas are where new content should be generated.
 
 **ABSOLUTE RULE: Preserve the white masked areas of the original image with 100% fidelity.**
 
@@ -340,7 +340,7 @@ const generateImageWithGemini = async ({ apiKey, base64Image, base64BackgroundIm
         
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
-            contents: { parts: parts },
+            contents: { parts },
             config: {
                 responseModalities: [Modality.IMAGE],
             },
@@ -401,18 +401,52 @@ function base64ToBlob(base64: string, mimeType: string): Blob {
     return new Blob([byteArray], { type: mimeType });
 }
 
+// Helper to convert any image data URL to a PNG Blob, as required by DALL-E 2 edits endpoint.
+const base64ToPngBlob = (base64DataUrl: string): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                return reject(new Error('Could not get canvas context'));
+            }
+            ctx.drawImage(img, 0, 0);
+            canvas.toBlob(blob => {
+                if (blob) {
+                    resolve(blob);
+                } else {
+                    reject(new Error('Canvas to PNG blob failed'));
+                }
+            }, 'image/png');
+        };
+        img.onerror = (err) => reject(new Error(`Image could not be loaded: ${err}`));
+        img.src = base64DataUrl;
+    });
+};
+
 
 const generateImageWithOpenAI = async ({ apiKey, model, base64Image, base64Mask, mimeType, prompt, mode, settings }: GenerateImageParams): Promise<string> => {
     // DALL-E 2 inpainting/outpainting workflow
-    // DEV NOTE: DALL-E 2 requires the input image to be a square PNG.
-    // This function does not currently enforce that, which may lead to API errors.
     if (model === 'dall-e-2' && mode === WorkMode.CREATIVE && base64Image && base64Mask) {
+        // DEV NOTE: DALL-E 2's edit API requires a SQUARE PNG image. 
+        // This function converts the input to PNG, but doesn't enforce a square aspect ratio.
+        // Non-square images will likely cause an API error from OpenAI.
         const formData = new FormData();
-        const imageBlob = base64ToBlob(base64Image.split(',')[1], mimeType);
-        const maskBlob = base64ToBlob(base64Mask.split(',')[1], 'image/png');
         
-        formData.append('image', imageBlob, 'image.png');
-        formData.append('mask', maskBlob, 'mask.png');
+        try {
+            const imagePngBlob = await base64ToPngBlob(base64Image);
+            const maskBlob = base64ToBlob(base64Mask.split(',')[1], 'image/png'); // Mask is already a PNG from canvas
+            
+            formData.append('image', imagePngBlob, 'image.png');
+            formData.append('mask', maskBlob, 'mask.png');
+        } catch (error) {
+            console.error("Error preparing images for DALL-E 2:", error);
+            throw new Error("Failed to convert image to PNG for editing. Please try a different image.");
+        }
+        
         formData.append('prompt', generateOpenAIPrompt(prompt, mode, settings));
         formData.append('n', '1');
         formData.append('size', '1024x1024');
