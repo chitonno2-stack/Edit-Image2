@@ -8,6 +8,23 @@ export class ApiKeyError extends Error {
   }
 }
 
+export const validateApiKey = async (apiKey: string): Promise<boolean> => {
+  if (!apiKey || apiKey.trim() === '') {
+    return false;
+  }
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    // A very simple, low-cost request to check for validity.
+    await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [{ parts: [{ text: 'test' }] }],
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
 interface EditParams {
   base64Image: string;
   base64BackgroundImage?: string | null;
@@ -17,6 +34,10 @@ interface EditParams {
   prompt: string;
   mode: WorkMode;
   settings: Record<string, any>;
+}
+
+interface GenerateImageParams extends EditParams {
+  apiKey: string | null;
 }
 
 const generateFullPrompt = (prompt: string, mode: WorkMode, settings: Record<string, any>, base64ReferenceImage?: string | null, base64Mask?: string | null): string => {
@@ -246,15 +267,13 @@ Apply the following style and technical parameters:\n`;
     return fullPrompt;
 }
 
-export const generateImageWithGemini = async ({ base64Image, base64BackgroundImage, base64ReferenceImage, base64Mask, mimeType, prompt, mode, settings }: EditParams): Promise<string> => {
-    const API_KEY = process.env.API_KEY;
-    if (!API_KEY) {
-        // Throwing an error will allow the UI to prompt for a key.
-        throw new ApiKeyError("API Key not found.");
+export const generateImageWithGemini = async ({ apiKey, base64Image, base64BackgroundImage, base64ReferenceImage, base64Mask, mimeType, prompt, mode, settings }: GenerateImageParams): Promise<string> => {
+    if (!apiKey) {
+        throw new ApiKeyError("API Key chưa được đặt. Vui lòng vào Quản lý API Key để thêm và chọn một key.");
     }
 
     try {
-        const ai = new GoogleGenAI({ apiKey: API_KEY });
+        const ai = new GoogleGenAI({ apiKey });
         const parts: Part[] = [];
 
         // Image 1: The source image
@@ -320,11 +339,10 @@ export const generateImageWithGemini = async ({ base64Image, base64BackgroundIma
         }
 
     } catch (error) {
-        if (error instanceof Error && (error.message.includes('API key not valid') || error.message.includes('Requested entity was not found.'))) {
-            throw new ApiKeyError('Invalid API Key.');
+        if (error instanceof Error && (error.message.includes('API key not valid') || error.message.includes('API_KEY_INVALID'))) {
+            throw new ApiKeyError('API Key đang sử dụng không hợp lệ hoặc đã bị thu hồi. Vui lòng chọn một key khác.');
         }
         console.error("Error calling Gemini API:", error);
-        // For other errors, re-throw so the UI can handle it.
         throw error;
     }
 };

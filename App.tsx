@@ -2,21 +2,10 @@ import React, { useState, useMemo, useEffect } from 'react';
 import ControlCenter from './components/ControlCenter';
 import Workspace from './components/Workspace';
 import ContextualPanel from './components/ContextualPanel';
+import ApiKeyManager from './components/ApiKeyManager';
 import { WorkMode, TextOverlay } from './types';
-import { generateImageWithGemini, ApiKeyError } from './services/geminiService';
+import { generateImageWithGemini, validateApiKey, ApiKeyError } from './services/geminiService';
 import { flattenTextOverlays } from './services/imageUtils';
-
-// Fix: Defined the AIStudio interface to resolve a TypeScript type conflict.
-interface AIStudio {
-  hasSelectedApiKey: () => Promise<boolean>;
-  openSelectKey: () => Promise<void>;
-}
-
-declare global {
-  interface Window {
-    aistudio?: AIStudio;
-  }
-}
 
 const initialSettings = {
   [WorkMode.PORTRAIT]: {
@@ -91,7 +80,11 @@ const App: React.FC = () => {
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [settings, setSettings] = useState<typeof initialSettings>(initialSettings);
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
-  const [isApiKeySet, setIsApiKeySet] = useState<boolean>(false);
+  
+  // New state for API Key Management
+  const [apiKeys, setApiKeys] = useState<string[]>([]);
+  const [activeApiKey, setActiveApiKey] = useState<string | null>(null);
+  const [isApiKeyManagerOpen, setIsApiKeyManagerOpen] = useState(false);
 
   // State for Identity Lock/Masking feature
   const [isMasking, setIsMasking] = useState(false);
@@ -102,30 +95,93 @@ const App: React.FC = () => {
   const [textOverlays, setTextOverlays] = useState<TextOverlay[]>([]);
   const [activeTextOverlayId, setActiveTextOverlayId] = useState<string | null>(null);
 
+  // Load keys from localStorage on initial render
   useEffect(() => {
-    const checkApiKey = async () => {
-      if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        setIsApiKeySet(hasKey);
+    try {
+      const storedKeys = localStorage.getItem('userApiKeys');
+      const storedActiveKey = localStorage.getItem('activeApiKey');
+      
+      if (storedKeys) {
+        const parsedKeys = JSON.parse(storedKeys) as string[];
+        setApiKeys(parsedKeys);
+        
+        if (storedActiveKey && parsedKeys.includes(storedActiveKey)) {
+          setActiveApiKey(storedActiveKey);
+        } else if (parsedKeys.length > 0) {
+          // If active key is invalid but others exist, set the first one
+          const newActiveKey = parsedKeys[0];
+          setActiveApiKey(newActiveKey);
+          localStorage.setItem('activeApiKey', newActiveKey);
+        }
       } else {
-        // If the aistudio context isn't available, we can't use the selector.
-        // We'll rely on the environment variable being set.
-        // The button will inform the user if the context is missing.
-        console.warn('AI Studio context not found. API key selection is disabled.');
-        // We can assume the key is set via environment variables in this case.
-        setIsApiKeySet(true); 
+        // If no keys are stored, open the manager automatically for the first-time user.
+        setIsApiKeyManagerOpen(true);
       }
-    };
-    checkApiKey();
+    } catch (error) {
+      console.error("Failed to load API keys from localStorage", error);
+      // Clear potentially corrupted storage
+      localStorage.removeItem('userApiKeys');
+      localStorage.removeItem('activeApiKey');
+    }
   }, []);
 
-  const handleSelectApiKey = async () => {
-    if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-        await window.aistudio.openSelectKey();
-        setIsApiKeySet(true); // Assume success to avoid race conditions
-    } else {
-        alert("API Key selection is not available in this environment.");
+  // API Key Manager Handlers
+  const handleAddApiKeys = async (keysToAdd: string[]) => {
+    const uniqueNewKeys = [...new Set(keysToAdd.filter(k => !apiKeys.includes(k)))];
+    if (uniqueNewKeys.length === 0) {
+      return { added: [], failed: keysToAdd };
     }
+    
+    const validationPromises = uniqueNewKeys.map(key => validateApiKey(key).then(isValid => ({ key, isValid })));
+    
+    const results = await Promise.all(validationPromises);
+
+    const added: string[] = [];
+    const failed: string[] = [];
+    
+    results.forEach(({ key, isValid }) => {
+      if (isValid) {
+        added.push(key);
+      } else {
+        failed.push(key);
+      }
+    });
+
+    if (added.length > 0) {
+      const updatedKeys = [...apiKeys, ...added];
+      setApiKeys(updatedKeys);
+      localStorage.setItem('userApiKeys', JSON.stringify(updatedKeys));
+      
+      if (!activeApiKey) {
+        const newActiveKey = added[0];
+        setActiveApiKey(newActiveKey);
+        localStorage.setItem('activeApiKey', newActiveKey);
+      }
+    }
+    
+    return { added, failed };
+  };
+
+  const handleDeleteApiKey = (keyToDelete: string) => {
+    const updatedKeys = apiKeys.filter(k => k !== keyToDelete);
+    setApiKeys(updatedKeys);
+    localStorage.setItem('userApiKeys', JSON.stringify(updatedKeys));
+    
+    if (activeApiKey === keyToDelete) {
+      const newActiveKey = updatedKeys.length > 0 ? updatedKeys[0] : null;
+      setActiveApiKey(newActiveKey);
+      if (newActiveKey) {
+        localStorage.setItem('activeApiKey', newActiveKey);
+      } else {
+        localStorage.removeItem('activeApiKey');
+      }
+    }
+  };
+
+  const handleSetActiveApiKey = (key: string) => {
+    setActiveApiKey(key);
+    localStorage.setItem('activeApiKey', key);
+    setIsApiKeyManagerOpen(false); // Close manager after selecting a key for better UX
   };
 
   const activeSettings = useMemo(() => settings[activeMode], [settings, activeMode]);
@@ -187,6 +243,12 @@ const App: React.FC = () => {
   
   const handleGenerate = async (prompt: string) => {
     if (!image) return;
+    if (!activeApiKey) {
+      alert("Vui lòng thiết lập một API Key đang hoạt động trước khi tạo ảnh.");
+      setIsApiKeyManagerOpen(true);
+      return;
+    }
+
     setIsLoading(true);
     setResultImage(null);
     
@@ -197,6 +259,7 @@ const App: React.FC = () => {
         
       const mimeType = imageWithText.substring(imageWithText.indexOf(':') + 1, imageWithText.indexOf(';'));
       const generatedImage = await generateImageWithGemini({
+        apiKey: activeApiKey,
         base64Image: imageWithText,
         base64BackgroundImage: activeMode === WorkMode.COMPOSITE ? backgroundImage : undefined,
         base64ReferenceImage: activeMode === WorkMode.CREATIVE ? referenceImage : undefined,
@@ -210,12 +273,10 @@ const App: React.FC = () => {
       setResultImage(generatedImage);
     } catch (error) {
       if (error instanceof ApiKeyError) {
-          setIsApiKeySet(false);
-          alert("Your API key is invalid, missing, or has been revoked. Please select a valid API key to continue.");
-          if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-              await window.aistudio.openSelectKey();
-              setIsApiKeySet(true); // Optimistically set key as selected
-          }
+          alert(error.message);
+          // The key might be invalid, let's remove it and prompt the user.
+          if(activeApiKey) handleDeleteApiKey(activeApiKey); 
+          setIsApiKeyManagerOpen(true);
       } else {
           console.error("An unexpected error occurred during image generation:", error);
           alert("An unexpected error occurred. Please check the console for details.");
@@ -316,8 +377,8 @@ const App: React.FC = () => {
         <ControlCenter 
           activeMode={activeMode} 
           setActiveMode={handleModeChange} 
-          isApiKeySet={isApiKeySet}
-          onSelectApiKey={handleSelectApiKey}
+          activeApiKey={activeApiKey}
+          onOpenApiKeyManager={() => setIsApiKeyManagerOpen(true)}
         />
         <ContextualPanel 
           activeMode={activeMode} 
@@ -366,6 +427,15 @@ const App: React.FC = () => {
           onSelectTextOverlay={setActiveTextOverlayId}
         />
       </main>
+      <ApiKeyManager 
+        isOpen={isApiKeyManagerOpen}
+        onClose={() => setIsApiKeyManagerOpen(false)}
+        apiKeys={apiKeys}
+        activeApiKey={activeApiKey}
+        onAddKeys={handleAddApiKeys}
+        onDeleteKey={handleDeleteApiKey}
+        onSetActiveKey={handleSetActiveApiKey}
+      />
     </div>
   );
 };
