@@ -17,7 +17,7 @@ export const validateApiKey = async (apiKey: string): Promise<boolean> => {
     // A very simple, low-cost request to check for validity.
     await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: [{ parts: [{ text: 'test' }] }],
+      contents: 'test',
     });
     return true;
   } catch (error) {
@@ -320,9 +320,7 @@ export const generateImageWithGemini = async ({ apiKey, base64Image, base64Backg
         
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
-            contents: {
-                parts: parts,
-            },
+            contents: [{ role: 'user', parts: parts }],
             config: {
                 responseModalities: [Modality.IMAGE],
             },
