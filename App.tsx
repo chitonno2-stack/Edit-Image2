@@ -272,28 +272,24 @@ const App: React.FC = () => {
     // For OpenAI text-to-image, an initial image is not required
     if (!image && targetProvider === AiProvider.GEMINI) return;
     
-    // --- START OF FIX ---
-    // Dynamically find a valid API key for the selected provider.
-    let keyForRequest: string | null = null;
+    // --- REVISED API KEY CHECKING LOGIC ---
+    
+    // 1. Find the first available key for the selected provider.
+    const keyForRequest = apiKeys[targetProvider]?.[0];
 
-    // 1. Check if the currently active key is suitable for the request.
-    if (activeApiKey && activeApiKey.provider === targetProvider) {
-      keyForRequest = activeApiKey.key;
-    } 
-    // 2. If not, find the first available key for the required provider.
-    else if (apiKeys[targetProvider].length > 0) {
-      keyForRequest = apiKeys[targetProvider][0];
-      // Automatically set this key as active for a smoother user experience.
-      handleSetActiveApiKey(keyForRequest, targetProvider);
-    }
-
-    // 3. If no key is found for the provider, alert the user.
+    // 2. If no key is found, alert the user and open the manager.
     if (!keyForRequest) {
-      alert(`Vui lòng vào "Quản lý API Key" để thêm và chọn một key cho ${targetProvider}.`);
+      alert(`Vui lòng vào "Quản lý API Key" để thêm key cho ${targetProvider}.`);
       setIsApiKeyManagerOpen(true);
       return;
     }
-    // --- END OF FIX ---
+    
+    // 3. For good UX, ensure the active key in the UI is updated to the one we're using.
+    if (!activeApiKey || activeApiKey.provider !== targetProvider || activeApiKey.key !== keyForRequest) {
+      handleSetActiveApiKey(keyForRequest, targetProvider);
+    }
+    
+    // --- END OF REVISED LOGIC ---
 
     setIsLoading(true);
     setResultImage(null);
@@ -324,8 +320,7 @@ const App: React.FC = () => {
       if (error instanceof ApiKeyError) {
           alert(error.message);
           // The key might be invalid, let's remove it and prompt the user.
-          // Use the key and provider that actually failed.
-          if(keyForRequest) handleDeleteApiKey(keyForRequest, targetProvider); 
+          handleDeleteApiKey(keyForRequest, targetProvider); 
           setIsApiKeyManagerOpen(true);
       } else {
           console.error("An unexpected error occurred during image generation:", error);
