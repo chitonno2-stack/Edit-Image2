@@ -267,13 +267,33 @@ const App: React.FC = () => {
   };
   
   const handleGenerate = async (prompt: string) => {
+    const targetProvider = activeSettings.provider;
+
     // For OpenAI text-to-image, an initial image is not required
-    if (!image && activeSettings.provider === AiProvider.GEMINI) return;
-    if (!activeApiKey) {
-      alert("Vui lòng thiết lập một API Key đang hoạt động trước khi tạo ảnh.");
+    if (!image && targetProvider === AiProvider.GEMINI) return;
+    
+    // --- START OF FIX ---
+    // Dynamically find a valid API key for the selected provider.
+    let keyForRequest: string | null = null;
+
+    // 1. Check if the currently active key is suitable for the request.
+    if (activeApiKey && activeApiKey.provider === targetProvider) {
+      keyForRequest = activeApiKey.key;
+    } 
+    // 2. If not, find the first available key for the required provider.
+    else if (apiKeys[targetProvider].length > 0) {
+      keyForRequest = apiKeys[targetProvider][0];
+      // Automatically set this key as active for a smoother user experience.
+      handleSetActiveApiKey(keyForRequest, targetProvider);
+    }
+
+    // 3. If no key is found for the provider, alert the user.
+    if (!keyForRequest) {
+      alert(`Vui lòng vào "Quản lý API Key" để thêm và chọn một key cho ${targetProvider}.`);
       setIsApiKeyManagerOpen(true);
       return;
     }
+    // --- END OF FIX ---
 
     setIsLoading(true);
     setResultImage(null);
@@ -286,8 +306,8 @@ const App: React.FC = () => {
       const mimeType = imageWithText?.substring(imageWithText.indexOf(':') + 1, imageWithText.indexOf(';')) || 'image/jpeg';
       
       const generatedImage = await generateImage({
-        apiKey: activeApiKey.key,
-        provider: activeSettings.provider,
+        apiKey: keyForRequest,
+        provider: targetProvider,
         model: activeSettings.model,
         base64Image: imageWithText,
         base64BackgroundImage: activeMode === WorkMode.COMPOSITE ? backgroundImage : undefined,
@@ -304,7 +324,8 @@ const App: React.FC = () => {
       if (error instanceof ApiKeyError) {
           alert(error.message);
           // The key might be invalid, let's remove it and prompt the user.
-          if(activeApiKey) handleDeleteApiKey(activeApiKey.key, activeApiKey.provider); 
+          // Use the key and provider that actually failed.
+          if(keyForRequest) handleDeleteApiKey(keyForRequest, targetProvider); 
           setIsApiKeyManagerOpen(true);
       } else {
           console.error("An unexpected error occurred during image generation:", error);
