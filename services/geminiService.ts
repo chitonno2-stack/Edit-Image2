@@ -320,9 +320,9 @@ export const generateImageWithGemini = async ({ apiKey, base64Image, base64Backg
         
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
-            contents: {
+            contents: [{
                 parts: parts,
-            },
+            }],
             config: {
                 responseModalities: [Modality.IMAGE],
             },
